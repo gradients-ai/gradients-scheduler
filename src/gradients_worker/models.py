@@ -105,3 +105,19 @@ class MinerTaskResult(BaseModel):
 class TaskResultResponse(BaseModel):
     id: UUID
     miner_results: list[MinerTaskResult] | None
+
+
+class HotkeyDetails(BaseModel):
+    hotkey: str
+    submission_id: UUID | None = None
+    quality_score: float | None = None
+    test_loss: float | None = None
+    synth_loss: float | None = None
+    repo: str | None = None
+    rank: int | None = None
+    score_reason: str | None = None
+    offer_response: dict | None = None
+
+
+class MinimalTaskWithHotkeyDetails(BaseModel):
+    hotkey_details: list[HotkeyDetails]

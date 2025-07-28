@@ -9,7 +9,7 @@ from .api import GradientsAPI
 from .config import settings
 from .dataset_scheduler import DatasetsScheduler
 from .models import (
-    MinerTaskResult,
+    HotkeyDetails,
     TaskRequest,
     TaskStatus,
     TaskStatusResponse,
@@ -190,27 +190,24 @@ class GradientsTrainingScheduler:
             self.tokenizer_merged = True
             logger.info(f"Updated model repo to {updated_model_repo}")
 
-    def _get_winning_miner_result(
-        self, miner_results: list[MinerTaskResult]
-    ) -> MinerTaskResult:
-        """Select best miner based on highest quality score."""
-        valid_miners = [
-            miner
-            for miner in miner_results
+    def _get_winning_miner_result(self, results: list[HotkeyDetails]) -> HotkeyDetails:
+        """Select best hotkey detail based on lowest test loss and valid repo."""
+        valid = [
+            r
+            for r in results
             if (
-                miner.quality_score is not None
-                and miner.test_loss is not None
-                and miner.test_loss != 0
+                r.quality_score is not None
+                and r.test_loss is not None
+                and r.test_loss != 0
             )
         ]
-        if not valid_miners:
-            raise ValueError("No miners with valid quality scores found")
-
-        return min(valid_miners, key=lambda x: x.test_loss)
+        if not valid:
+            raise ValueError("No hotkey details with valid test loss and repo found")
+        return min(valid, key=lambda x: x.test_loss)
 
     def _log_training_metrics(
         self,
-        miner_result: MinerTaskResult,
+        miner_result: HotkeyDetails,
         response: TaskStatusResponse,
         merged_model: str,
     ) -> str:
@@ -219,7 +216,7 @@ class GradientsTrainingScheduler:
 
         config = {
             "merged_model_repo": merged_model,
-            "model_repo": response.trained_model_repository,
+            "model_repo": miner_result.repo,
             "previously_finetuned_model_repo": response.base_model_repository,
             "original_model_repo": self.task_config["model_repo"],
             "timestamp": timestamp,
@@ -231,7 +228,7 @@ class GradientsTrainingScheduler:
         run = wandb.init(
             entity=settings.WANDB_ENTITY,
             project=self.wandb_project,
-            name=f"{response.trained_model_repository.split('/')[-1]}_{response.id}",
+            name=f"{miner_result.repo.split('/')[-1]}_{response.id}",
             config=config,
         )
 
@@ -325,19 +322,20 @@ class GradientsTrainingScheduler:
                 logger.info(f"Task status: {response.status}")
 
                 if response.status == TaskStatus.SUCCESS:
-                    trained_model_repository = response.trained_model_repository
-                    logger.info(
-                        f"Training completed successfully. Model repo: {trained_model_repository}"
-                    )
-
+                    logger.info("Training completed successfully!")
                     try:
-                        results = await self.api.get_miner_breakdown(task_id)
-                        if not results.miner_results:
-                            raise ValueError("No miner results found")
+                        details = await self.api.get_task_hotkey_details(task_id)
+                        if not details.hotkey_details:
+                            raise ValueError("No hotkey details found")
 
-                        best_miner_result = self._get_winning_miner_result(
-                            results.miner_results
+                        best_hotkey = self._get_winning_miner_result(
+                            details.hotkey_details
                         )
+                        if not best_hotkey or not best_hotkey.repo:
+                            raise ValueError("No valid repo found in hotkey details")
+                        trained_model_repository = best_hotkey.repo
+                        logger.info(f"Chosen model repo: {trained_model_repository}")
+
                         try:
                             merged_model = await merge_and_upload_model(
                                 trained_model_repository, self.task_request.model_repo
@@ -347,19 +345,19 @@ class GradientsTrainingScheduler:
                             merged_model = trained_model_repository
 
                         self._log_training_metrics(
-                            miner_result=best_miner_result,
+                            miner_result=best_hotkey,
                             response=response,
                             merged_model=merged_model,
                         )
 
                         logger.info(
-                            f"Logged metrics from best miner: {best_miner_result.hotkey}"
+                            f"Logged metrics from best miner: {best_hotkey.hotkey}"
                         )
                         self.last_successful_run = datetime.now()
-                        return response.trained_model_repository
+                        return trained_model_repository
 
                     except Exception as e:
-                        logger.error(f"Failed to process miner results: {str(e)}")
+                        logger.error(f"Failed to process hotkey details: {str(e)}")
                         return None
 
                 elif response.status.is_failure():

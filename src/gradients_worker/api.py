@@ -4,6 +4,7 @@ from aiohttp_retry import ExponentialRetry, RetryClient
 
 from gradients_worker.config import settings
 from gradients_worker.models import (
+    MinimalTaskWithHotkeyDetails,
     NewTaskResponse,
     TaskRequest,
     TaskResultResponse,
@@ -18,6 +19,7 @@ TASKS_CREATE_WITH_FIXED_DATASETS_ENDPOINT = "/v1/tasks/create_with_fixed_dataset
 GET_TASK_STATUS_ENDPOINT = "/v1/tasks/{task_id}"
 GET_TASK_RESULTS_ENDPOINT = "/v1/tasks/task_results/{task_id}"
 GET_TASKS_RESULTS_ENDPOINT = "/v1/tasks/breakdown/{task_id}"
+AUDITING_TASKS_BY_ID_ENDPOINT = "/auditing/tasks/{task_id}"
 
 
 class GradientsAPI:
@@ -115,3 +117,18 @@ class GradientsAPI:
             ) as response:
                 response.raise_for_status()
                 return TaskResultResponse.model_validate(await response.json())
+
+    async def get_task_hotkey_details(
+        self, task_id: str
+    ) -> MinimalTaskWithHotkeyDetails:
+        """Get the hotkey details for a specific task using the auditing endpoint."""
+        logger.debug(f"Getting task hotkey details for task: {task_id}")
+        async with RetryClient(retry_options=self.get_retry_options) as session:
+            async with session.get(
+                f"{self.base_url}{AUDITING_TASKS_BY_ID_ENDPOINT.format(task_id=task_id)}",
+                headers=self.headers,
+            ) as response:
+                response.raise_for_status()
+                return MinimalTaskWithHotkeyDetails.model_validate(
+                    await response.json()
+                )
