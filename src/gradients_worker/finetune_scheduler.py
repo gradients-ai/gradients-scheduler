@@ -15,7 +15,11 @@ from .models import (
     TaskStatusResponse,
     TaskWithFixedDatasetsRequest,
 )
-from .utils import load_config, merge_and_upload_model, update_model_tokenizer
+from .utils import (
+    load_config,
+    merge_and_upload_model_subprocess,
+    update_model_tokenizer_subprocess,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +185,7 @@ class GradientsTrainingScheduler:
         if "tokenizer_id" in self.task_config and not self.tokenizer_merged:
             logger.info(f"Updating tokenizer for model {self.last_merged_model}")
 
-            updated_model_repo = await update_model_tokenizer(
+            updated_model_repo = await update_model_tokenizer_subprocess(
                 model_id=self.last_merged_model,
                 tokenizer_id=self.task_config["tokenizer_id"],
             )
@@ -337,8 +341,9 @@ class GradientsTrainingScheduler:
                         logger.info(f"Chosen model repo: {trained_model_repository}")
 
                         try:
-                            merged_model = await merge_and_upload_model(
-                                trained_model_repository, self.task_request.model_repo
+                            merged_model = await merge_and_upload_model_subprocess(
+                                lora_model_id=trained_model_repository,
+                                base_model_id=self.task_request.model_repo,
                             )
                         except Exception as e:
                             logger.error(f"Error merging and uploading model: {e}")

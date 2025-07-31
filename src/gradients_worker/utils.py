@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import uuid
 from datetime import timedelta
@@ -7,6 +8,7 @@ from logging import getLogger
 from typing import Optional, Tuple
 
 import datasets
+import torch
 import yaml
 from huggingface_hub import HfApi
 from minio import Minio
@@ -16,6 +18,23 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from gradients_worker.config import settings
 
 logger = getLogger(__name__)
+
+
+def log_memory_stats():
+    """Log detailed memory statistics for debugging."""
+    logger.info("===== MEMORY STATS =====")
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            allocated = torch.cuda.memory_allocated(i) / 1024**2
+            reserved = torch.cuda.memory_reserved(i) / 1024**2
+            max_allocated = torch.cuda.max_memory_allocated(i) / 1024**2
+            logger.info(
+                f"GPU {i} Memory: Allocated: {allocated:.2f} MB, "
+                f"Reserved: {reserved:.2f} MB, "
+                f"Max Allocated: {max_allocated:.2f} MB"
+            )
+    else:
+        logger.info("No CUDA devices available")
 
 
 async def merge_and_upload_model(
@@ -198,3 +217,68 @@ def load_config(config_path: str) -> dict:
         config = yaml.safe_load(f)
 
     return config
+
+
+async def merge_and_upload_model_subprocess(
+    lora_model_id: str, base_model_id: str, anonimize: bool = True
+) -> str:
+    """Run merge_and_upload_model in a subprocess to avoid GPU memory leaks.
+
+    Args:
+        lora_model_id: The HF ID of the LoRA adapter
+        base_model_id: The HF ID of the base model
+        anonimize: Whether to anonymize the model name
+
+    Returns:
+        str: The new model repo ID
+    """
+    cmd = [
+        "python",
+        "src/gradients_worker/run_merge_and_upload_model.py",
+        "--lora-model-id",
+        lora_model_id,
+        "--base-model-id",
+        base_model_id,
+        "--anonimize",
+        str(anonimize),
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        output = result.stdout.strip()
+        # Get the last non-empty line (our result)
+        lines = [line.strip() for line in output.split("\n") if line.strip()]
+        return lines[-1] if lines else ""
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Subprocess failed: {e.stderr}")
+        raise Exception(f"Failed to merge and upload model: {e.stderr}")
+
+
+async def update_model_tokenizer_subprocess(model_id: str, tokenizer_id: str) -> str:
+    """Run update_model_tokenizer in a subprocess to avoid GPU memory leaks.
+
+    Args:
+        model_id: The HF ID of the model to update
+        tokenizer_id: The HF ID of the tokenizer to use
+
+    Returns:
+        str: The new model repo ID
+    """
+    cmd = [
+        "python",
+        "src/gradients_worker/run_update_model_tokenizer.py",
+        "--model-id",
+        model_id,
+        "--tokenizer-id",
+        tokenizer_id,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        output = result.stdout.strip()
+        # Get the last non-empty line (our result)
+        lines = [line.strip() for line in output.split("\n") if line.strip()]
+        return lines[-1] if lines else ""
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Subprocess failed: {e.stderr}")
+        raise Exception(f"Failed to update model tokenizer: {e.stderr}")
