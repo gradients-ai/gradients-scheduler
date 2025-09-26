@@ -13,6 +13,7 @@ from .models import (
     TaskRequest,
     TaskStatus,
     TaskStatusResponse,
+    TaskType,
     TaskWithFixedDatasetsRequest,
 )
 from .utils import (
@@ -25,12 +26,11 @@ logger = logging.getLogger(__name__)
 
 
 class GradientsTrainingScheduler:
-    def __init__(self, task_name: str, use_fixed_datasets: bool = False):
+    def __init__(self, task_name: str):
         """Initialize training scheduler for a specific task name.
 
         Args:
             task_name: The task name from config.yaml
-            use_fixed_datasets: Whether to use the fixed datasets endpoint or the original task request
         """
         self.task_name = task_name
         self.config = load_config("config.yaml")
@@ -41,14 +41,17 @@ class GradientsTrainingScheduler:
         self.training_number = 0
         self.last_merged_model = self.task_config["model_repo"]
         self.last_successful_run = None
-        self.use_fixed_datasets = use_fixed_datasets
+        task_type_str = self.task_config.get("task_type", "InstructText")
+        self.task_type = TaskType(task_type_str)
 
         self.task_request = None
 
         # Initialize the dataset scheduler
         self.dataset_scheduler = DatasetsScheduler(self.task_config)
 
-        logger.info(f"Initialized GradientsTrainingScheduler for {task_name}")
+        logger.info(
+            f"Initialized GradientsTrainingScheduler for {task_name} with task_type: {self.task_type.value}"
+        )
 
     def generate_task_request(self) -> TaskRequest | TaskWithFixedDatasetsRequest:
         """Generate task request from task_config.
@@ -65,7 +68,7 @@ class GradientsTrainingScheduler:
         # Determine which chunk to use based on training number
         chunk_index = self.training_number % self.dataset_scheduler.num_chunks
 
-        if self.use_fixed_datasets:
+        if self.task_type == TaskType.INSTRUCTTEXTWITHFIXEDDATASETS:
             train_url, test_url, synth_url = (
                 self.dataset_scheduler.prepare_and_upload_chunk(chunk_index)
             )
@@ -84,7 +87,7 @@ class GradientsTrainingScheduler:
                 test_data=test_url,
                 synthetic_data=synth_url,
             )
-        else:
+        elif self.task_type == TaskType.INSTRUCTTEXT:
             dataset_url = self.dataset_scheduler.prepare_and_upload_whole_chunk(
                 chunk_index
             )
@@ -102,6 +105,8 @@ class GradientsTrainingScheduler:
                 hours_to_complete=self.task_config.get("hours_to_complete", 8),
                 file_format="s3",
             )
+        elif self.task_type == TaskType.CHAT:
+            raise NotImplementedError("Chat task type not implemented")
 
         return task_request
 
@@ -311,12 +316,14 @@ class GradientsTrainingScheduler:
         logger.info("Creating training task")
 
         try:
-            if self.use_fixed_datasets:
+            if self.task_type == TaskType.INSTRUCTTEXTWITHFIXEDDATASETS:
                 task = await self.api.create_training_task_with_fixed_datasets(
                     self.task_request
                 )
-            else:
+            elif self.task_type == TaskType.INSTRUCTTEXT:
                 task = await self.api.create_training_task(self.task_request)
+            elif self.task_type == TaskType.CHAT:
+                raise NotImplementedError("Chat task type not implemented")
 
             task_id = task.task_id
             logger.info(f"Training task created with ID: {task_id}")

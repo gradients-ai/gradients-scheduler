@@ -121,3 +121,9 @@ class HotkeyDetails(BaseModel):
 
 class MinimalTaskWithHotkeyDetails(BaseModel):
     hotkey_details: list[HotkeyDetails]
+
+
+class TaskType(str, Enum):
+    INSTRUCTTEXT = "InstructText"
+    INSTRUCTTEXTWITHFIXEDDATASETS = "InstructTextWithFixedDatasets"
+    CHAT = "Chat"
