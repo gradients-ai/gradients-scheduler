@@ -41,20 +41,28 @@ class TaskStatusResponse(BaseModel):
     id: UUID
     account_id: UUID
     status: TaskStatus
-    base_model_repository: Optional[str]
-    trained_model_repository: Optional[str]
-    ds_repo: Optional[str]
-    field_input: Optional[str]
-    field_system: Optional[str]
-    field_output: Optional[str]
-    field_instruction: Optional[str]
-    format: Optional[str]
-    no_input_format: Optional[str]
-    system_format: Optional[str]
-    started_at: Optional[str]
-    finished_at: Optional[str]
+    base_model_repository: Optional[str] = None
+    trained_model_repository: Optional[str] = None
+    ds_repo: Optional[str] = None
+    field_input: Optional[str] = None
+    field_system: Optional[str] = None
+    field_output: Optional[str] = None
+    field_instruction: Optional[str] = None
+    format: Optional[str] = None
+    no_input_format: Optional[str] = None
+    system_format: Optional[str] = None
+    chat_template: Optional[str] = None
+    chat_column: Optional[str] = None
+    chat_role_field: Optional[str] = None
+    chat_content_field: Optional[str] = None
+    chat_user_reference: Optional[str] = None
+    chat_assistant_reference: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
     created_at: str
     hours_to_complete: int
+    task_type: Optional[str] = None
+    result_model_name: Optional[str] = None
 
 
 class EvaluationConfig(BaseModel):
@@ -85,6 +93,23 @@ class TaskWithFixedDatasetsRequest(TaskRequest):
     training_data: str = Field(..., description="The prepared training dataset")
     synthetic_data: str = Field(..., description="The prepared synthetic dataset")
     test_data: str = Field(..., description="The prepared test dataset")
+
+
+class TaskRequestChat(BaseModel):
+    account_id: str
+    model_repo: str
+    hours_to_complete: int
+    chat_template: str = Field(..., description="The chat template of the dataset", examples=["chatml"])
+    chat_column: str | None = Field(None, description="The column name containing the conversations", examples=["conversations"])
+    chat_role_field: str | None = Field(None, description="The column name for the role", examples=["from"])
+    chat_content_field: str | None = Field(None, description="The column name for the content", examples=["value"])
+    chat_user_reference: str | None = Field(None, description="The user reference", examples=["user"])
+    chat_assistant_reference: str | None = Field(None, description="The assistant reference", examples=["assistant"])
+
+    ds_repo: str = Field(..., description="The repository for the dataset", examples=["Magpie-Align/Magpie-Pro-300K-Filtered"])
+    file_format: Optional[str] = "hf"
+    model_repo: str = Field(..., description="The repository for the model", examples=["Qwen/Qwen2.5-Coder-32B-Instruct"])
+
 
 
 class NewTaskResponse(BaseModel):

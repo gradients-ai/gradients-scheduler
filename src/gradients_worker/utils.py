@@ -3,7 +3,7 @@ import os
 import subprocess
 import tempfile
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from logging import getLogger
 from typing import Optional, Tuple
 
@@ -18,6 +18,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from gradients_worker.config import settings
 
 logger = getLogger(__name__)
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 def log_memory_stats():
@@ -158,7 +167,7 @@ def save_dataset_to_temp(
     data = dataset.to_list()
 
     with open(temp_file.name, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, cls=DateTimeEncoder)
 
     file_size = os.path.getsize(temp_file.name)
     return temp_file.name, file_size

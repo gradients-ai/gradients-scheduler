@@ -15,6 +15,7 @@ from .models import (
     TaskStatusResponse,
     TaskType,
     TaskWithFixedDatasetsRequest,
+    TaskRequestChat,
 )
 from .utils import (
     load_config,
@@ -53,7 +54,7 @@ class GradientsTrainingScheduler:
             f"Initialized GradientsTrainingScheduler for {task_name} with task_type: {self.task_type.value}"
         )
 
-    def generate_task_request(self) -> TaskRequest | TaskWithFixedDatasetsRequest:
+    def generate_task_request(self) -> TaskRequest | TaskWithFixedDatasetsRequest | TaskRequestChat:
         """Generate task request from task_config.
 
         Sets self.task_request and self.training_number.
@@ -106,7 +107,27 @@ class GradientsTrainingScheduler:
                 file_format="s3",
             )
         elif self.task_type == TaskType.CHAT:
-            raise NotImplementedError("Chat task type not implemented")
+            dataset_url = self.dataset_scheduler.prepare_and_upload_whole_chunk(
+                chunk_index
+            )
+
+            logger.info(
+                f"Using chunk idx {chunk_index} ({self.dataset_scheduler.num_chunks} chunks) for training {self.training_number}"
+            )
+
+            task_request = TaskRequestChat(
+                model_repo=self.last_merged_model,
+                account_id="00000000-0000-0000-0000-000000000000",
+                ds_repo=dataset_url,
+                chat_template="chatml",
+                chat_column=self.task_config.get("chat_column", "conversations"),
+                chat_role_field=self.task_config.get("chat_role_field", "from"),
+                chat_content_field=self.task_config.get("chat_content_field", "value"),
+                chat_user_reference=self.task_config.get("chat_user_reference", "user"),
+                chat_assistant_reference=self.task_config.get("chat_assistant_reference", "assistant"),
+                hours_to_complete=self.task_config.get("hours_to_complete", 8),
+                file_format="s3",
+            )
 
         return task_request
 
@@ -323,7 +344,7 @@ class GradientsTrainingScheduler:
             elif self.task_type == TaskType.INSTRUCTTEXT:
                 task = await self.api.create_training_task(self.task_request)
             elif self.task_type == TaskType.CHAT:
-                raise NotImplementedError("Chat task type not implemented")
+                task = await self.api.create_chat_training_task(self.task_request)
 
             task_id = task.task_id
             logger.info(f"Training task created with ID: {task_id}")

@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from .models import TaskType
+
 from datasets import (
     Dataset,
     DatasetDict,
@@ -36,6 +38,8 @@ class DatasetsScheduler:
         self.random_seed = task_config.get("random_seed", 42)
         self.final_test_size = task_config.get("final_test_size", 0.05)
         self.samples_per_training = task_config.get("samples_per_training", 150_000)
+        task_type_str = self.task_config.get("task_type", "InstructText")
+        self.task_type = TaskType(task_type_str)
 
         if isinstance(self.dataset_configs, dict):
             items_str = str(sorted(self.dataset_configs.items()))
@@ -185,7 +189,11 @@ class DatasetsScheduler:
 
             standardized_datasets = []
             for dataset, ds_config in downloaded_datasets:
-                standardized_dataset = self._standardize_dataset(dataset, ds_config)
+                if self.task_type != TaskType.CHAT:
+                    standardized_dataset = self._standardize_dataset(dataset, ds_config)
+                else:
+                    # For Chat task type, use the data  set as-is
+                    standardized_dataset = dataset
                 standardized_datasets.append(standardized_dataset)
                 logger.info(
                     f"Standardized dataset {ds_config['name']} with {len(standardized_dataset)} samples"
