@@ -16,7 +16,6 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from gradients_worker.config import settings
-from gradients_worker.models import TaskType, TaskRequest, TaskWithFixedDatasetsRequest, NewTaskResponse
 
 logger = getLogger(__name__)
 
@@ -298,29 +297,3 @@ async def update_model_tokenizer_subprocess(model_id: str, tokenizer_id: str) ->
     except subprocess.CalledProcessError as e:
         logger.error(f"Subprocess failed: {e.stderr}")
         raise Exception(f"Failed to update model tokenizer: {e.stderr}")
-
-
-async def create_training_task(
-    api, task_type: TaskType, task_request: TaskRequest | TaskWithFixedDatasetsRequest
-) -> NewTaskResponse:
-    """Create a training task by sending a request to the appropriate API endpoint based on task type.
-    
-    Args:
-        api: The GradientsAPI instance
-        task_type: The type of task to create
-        task_request: The task request object
-        
-    Returns:
-        NewTaskResponse: The response from the API
-        
-    Raises:
-        ValueError: If the task type is not supported
-    """
-    if task_type == TaskType.INSTRUCTTEXTWITHFIXEDDATASETS:
-        return await api.create_training_task_with_fixed_datasets(task_request)
-    elif task_type == TaskType.INSTRUCTTEXT:
-        return await api.create_training_task(task_request)
-    elif task_type == TaskType.CHAT:
-        return await api.create_chat_training_task(task_request)
-    else:
-        raise ValueError(f"Unsupported task type: {task_type}")
