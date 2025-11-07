@@ -69,8 +69,9 @@ class GradientsAPI:
                     response.raise_for_status()
                 return NewTaskResponse.model_validate(await response.json())
 
-
-    async def create_chat_training_task(self, task_request: TaskRequest) -> NewTaskResponse:
+    async def create_chat_training_task(
+        self, task_request: TaskRequest
+    ) -> NewTaskResponse:
         logger.info(
             f"Sending create chat training task request: {task_request.model_dump_json(indent=2)} \n headers: {self.headers}"
         )
@@ -156,10 +157,12 @@ class GradientsAPI:
                 )
 
     async def create_training_task_by_type(
-        self, task_type: TaskType, task_request: TaskRequest | TaskWithFixedDatasetsRequest
+        self,
+        task_type: TaskType,
+        task_request: TaskRequest | TaskWithFixedDatasetsRequest,
     ) -> NewTaskResponse:
         """Create a training task by sending a request to the appropriate API endpoint based on task type."""
-        
+
         if task_type == TaskType.INSTRUCTTEXTWITHFIXEDDATASETS:
             return await self.create_training_task_with_fixed_datasets(task_request)
         elif task_type == TaskType.INSTRUCTTEXT:
