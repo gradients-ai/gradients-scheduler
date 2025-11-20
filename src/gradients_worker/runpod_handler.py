@@ -48,7 +48,9 @@ def merge_and_upload_model(
     )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        new_repo_name = str(uuid.uuid4()) if anonimize else f"merged-{lora_model_id.split('/')[-1]}"
+        new_repo_name = (
+            str(uuid.uuid4()) if anonimize else f"merged-{lora_model_id.split('/')[-1]}"
+        )
         new_repo_id = f"{hf_username}/{new_repo_name}"
 
         api = HfApi(token=hf_token)
@@ -66,6 +68,7 @@ def merge_and_upload_model(
         base_model = AutoModelForCausalLM.from_pretrained(
             base_model_id,
             device_map="auto",
+            dtype=torch.bfloat16,
             low_cpu_mem_usage=True,
             trust_remote_code=True,
             token=hf_token,
