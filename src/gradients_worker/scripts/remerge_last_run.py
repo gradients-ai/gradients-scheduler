@@ -16,6 +16,7 @@ from logging import getLogger
 import runpod
 
 import wandb
+from gradients_worker import constants as cst
 from gradients_worker.config import settings
 from gradients_worker.utils import load_config
 
@@ -26,9 +27,9 @@ def remerge_task(task_name: str):
     """Re-merge the last trained model for a given task."""
 
     # 1. Load task configuration
-    config = load_config("config.yaml")
+    config = load_config(cst.CONFIG_FILENAME)
     task_config = config.get(task_name)
-    wandb_project = task_config.get("wandb_project")
+    wandb_project = task_config.get(cst.KEY_WANDB_PROJECT)
 
     logger.info(f"Task: {task_name}")
     logger.info(f"W&B Project: {wandb_project}")
@@ -42,10 +43,10 @@ def remerge_task(task_name: str):
     target_run = None
 
     for run in runs:
-        if not hasattr(run, "config") or "training_number" not in run.config:
+        if not hasattr(run, "config") or cst.KEY_TRAINING_NUMBER not in run.config:
             continue
 
-        training_number = run.config.get("training_number", 0)
+        training_number = run.config.get(cst.KEY_TRAINING_NUMBER, 0)
         if training_number > max_training_number:
             max_training_number = training_number
             target_run = run
@@ -55,9 +56,9 @@ def remerge_task(task_name: str):
     logger.info(f"Run ID: {target_run.id}")
 
     # 3. Extract model repositories
-    model_repo = target_run.config.get("model_repo")  # LoRA adapter
+    model_repo = target_run.config.get(cst.KEY_MODEL_REPO)  # LoRA adapter
     previously_finetuned_model_repo = target_run.config.get(
-        "previously_finetuned_model_repo"
+        cst.KEY_PREVIOUSLY_FINETUNED_MODEL_REPO
     )
 
     logger.info(f"LoRA model (model_repo): {model_repo}")
@@ -96,7 +97,7 @@ def remerge_task(task_name: str):
     # 6. Create new W&B run with updated merged_model_repo
     # Copy all config from original run
     new_config = dict(target_run.config)
-    new_config["merged_model_repo"] = expected_merged_repo
+    new_config[cst.KEY_MERGED_MODEL_REPO] = expected_merged_repo
 
     logger.info("Creating new W&B run with updated merged_model_repo...")
 
@@ -110,7 +111,7 @@ def remerge_task(task_name: str):
     # Copy metrics from original run if available
     if hasattr(target_run, "summary"):
         metrics = {}
-        for key in ["test_loss", "synth_loss", "weighted_loss", "score"]:
+        for key in [cst.KEY_TEST_LOSS, cst.KEY_SYNTH_LOSS, cst.KEY_WEIGHTED_LOSS, cst.KEY_SCORE]:
             if key in target_run.summary:
                 metrics[key] = target_run.summary[key]
 

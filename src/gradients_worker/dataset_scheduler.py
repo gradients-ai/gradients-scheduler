@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from .models import TaskType
-
 from datasets import (
     Dataset,
     DatasetDict,
@@ -15,6 +13,8 @@ from datasets import (
     load_from_disk,
 )
 
+from . import constants as cst
+from .models import TaskType
 from .utils import save_dataset_to_temp, upload_to_minio
 
 logger = logging.getLogger(__name__)
@@ -32,13 +32,17 @@ class DatasetsScheduler:
         """
         self.task_config = task_config
         self.cache_dir = cache_dir or os.path.join(
-            Path.home(), ".cache", "gradients_worker", "datasets"
+            Path.home(), cst.CACHE_DIR_NAME, cst.WORKER_DIR_NAME, cst.DATASETS_DIR_NAME
         )
-        self.dataset_configs = task_config.get("datasets", [])
-        self.random_seed = task_config.get("random_seed", 42)
-        self.final_test_size = task_config.get("final_test_size", 0.05)
-        self.samples_per_training = task_config.get("samples_per_training", 150_000)
-        task_type_str = self.task_config.get("task_type", "InstructText")
+        self.dataset_configs = task_config.get(cst.KEY_DATASETS, [])
+        self.random_seed = task_config.get(cst.KEY_RANDOM_SEED, cst.DEFAULT_RANDOM_SEED)
+        self.final_test_size = task_config.get(
+            cst.KEY_FINAL_TEST_SIZE, cst.DEFAULT_FINAL_TEST_SIZE
+        )
+        self.samples_per_training = task_config.get(
+            cst.KEY_SAMPLES_PER_TRAINING, cst.DEFAULT_SAMPLES_PER_TRAINING
+        )
+        task_type_str = self.task_config.get(cst.KEY_TASK_TYPE, "InstructText")
         self.task_type = TaskType(task_type_str)
 
         if isinstance(self.dataset_configs, dict):
@@ -47,13 +51,15 @@ class DatasetsScheduler:
             items_str = str(self.dataset_configs)
         config_hash = hashlib.md5(items_str.encode()).hexdigest()[:10]
 
-        self.task_name = task_config.get("wandb_project", "task")
+        self.task_name = task_config.get(cst.KEY_WANDB_PROJECT, "task")
         self.dataset_dir = os.path.join(
             self.cache_dir, f"{self.task_name}_{config_hash}"
         )
 
         os.makedirs(self.dataset_dir, exist_ok=True)
-        self.merged_dataset_path = os.path.join(self.dataset_dir, "merged_dataset")
+        self.merged_dataset_path = os.path.join(
+            self.dataset_dir, cst.MERGED_DATASET_DIR
+        )
 
         # We'll determine total_samples when needed
         self._total_samples = None
@@ -67,7 +73,7 @@ class DatasetsScheduler:
         downloaded_datasets = []
 
         for ds_config in self.dataset_configs:
-            dataset_name = ds_config["name"]
+            dataset_name = ds_config[cst.KEY_NAME]
             try:
                 logger.info(f"Downloading dataset: {dataset_name}")
                 dataset = load_dataset(dataset_name, cache_dir=self.cache_dir)
@@ -77,12 +83,14 @@ class DatasetsScheduler:
                     dataset = dataset["train"]
 
                 # Apply max_rows subsampling if specified
-                max_rows = ds_config.get("max_rows")
+                max_rows = ds_config.get(cst.KEY_MAX_ROWS)
                 if max_rows is not None and len(dataset) > max_rows:
                     logger.info(
                         f"Subsampling dataset {dataset_name} from {len(dataset)} to {max_rows} rows"
                     )
-                    dataset = dataset.shuffle(seed=self.random_seed).select(range(max_rows))
+                    dataset = dataset.shuffle(seed=self.random_seed).select(
+                        range(max_rows)
+                    )
 
                 downloaded_datasets.append((dataset, ds_config))
                 logger.info(
@@ -97,7 +105,7 @@ class DatasetsScheduler:
 
     def _standardize_dataset(self, dataset: Dataset, ds_config: dict) -> Dataset:
         """Standardize dataset column names to instruction, input, output.
-    
+
         Args:
             dataset: The dataset to standardize
             ds_config: The dataset configuration with field mappings
@@ -107,39 +115,96 @@ class DatasetsScheduler:
         """
 
         if self.task_type == TaskType.CHAT:
-            return dataset
-        field_instruction = ds_config.get("field_instruction")
-        field_input = ds_config.get("field_input")
-        field_output = ds_config.get("field_output")
+            chat_column = ds_config.get(cst.KEY_CHAT_COLUMN, cst.DEFAULT_CHAT_COLUMN)
+            chat_role_field = ds_config.get(
+                cst.KEY_CHAT_ROLE_FIELD, cst.DEFAULT_CHAT_ROLE_FIELD
+            )
+            chat_content_field = ds_config.get(
+                cst.KEY_CHAT_CONTENT_FIELD, cst.DEFAULT_CHAT_CONTENT_FIELD
+            )
+            chat_user_reference = ds_config.get(
+                cst.KEY_CHAT_USER_REFERENCE, cst.DEFAULT_CHAT_USER_REFERENCE
+            )
+            chat_assistant_reference = ds_config.get(
+                cst.KEY_CHAT_ASSISTANT_REFERENCE, cst.DEFAULT_CHAT_ASSISTANT_REFERENCE
+            )
 
-        rename_mapping = {}
-        if field_instruction and field_instruction != "instruction":
-            rename_mapping[field_instruction] = "instruction"
-        if field_output and field_output != "output":
-            rename_mapping[field_output] = "output"
-        if field_input and field_input != "input":
-            rename_mapping[field_input] = "input"
+            if chat_column in dataset.column_names:
 
-        if rename_mapping:
-            dataset = dataset.rename_columns(rename_mapping)
+                def standardize_conversation(example):
+                    conversations = example[chat_column]
+                    standardized = []
+                    for conv in conversations:
+                        role = conv.get(chat_role_field, "")
+                        if role == chat_user_reference:
+                            role = cst.DEFAULT_CHAT_USER_REFERENCE
+                        elif role == chat_assistant_reference:
+                            role = cst.DEFAULT_CHAT_ASSISTANT_REFERENCE
 
-        # Check if we need to add an empty input field
-        if not field_input or "input" not in dataset.column_names:
-            logger.info(f"Adding empty 'input' field to dataset {ds_config['name']}")
-            dataset = dataset.add_column("input", ["" for _ in range(len(dataset))])
+                        standardized_conv = {
+                            cst.DEFAULT_CHAT_ROLE_FIELD: role,
+                            cst.DEFAULT_CHAT_CONTENT_FIELD: conv.get(
+                                chat_content_field, ""
+                            ),
+                        }
+                        standardized.append(standardized_conv)
+                    return {cst.DEFAULT_CHAT_COLUMN: standardized}
 
-        columns_to_keep = ["instruction", "input", "output"]
-        existing_columns = set(dataset.column_names)
-
-        # Ensure all required columns exist
-        for col in columns_to_keep:
-            if col not in existing_columns:
-                raise ValueError(
-                    f"Required column '{col}' not found in dataset after standardization"
+                cols_to_remove = [
+                    col
+                    for col in dataset.column_names
+                    if col != cst.DEFAULT_CHAT_COLUMN
+                ]
+                dataset = dataset.map(
+                    standardize_conversation, remove_columns=cols_to_remove
+                )
+                logger.info(
+                    f"Standardized chat dataset {ds_config[cst.KEY_NAME]} to use '{cst.DEFAULT_CHAT_COLUMN}' with '{cst.DEFAULT_CHAT_ROLE_FIELD}' and '{cst.DEFAULT_CHAT_CONTENT_FIELD}' fields"
                 )
 
-        dataset = dataset.select_columns(columns_to_keep)
-        return dataset
+            return dataset
+
+        elif self.task_type == TaskType.INSTRUCTTEXT:
+            field_instruction = ds_config.get(cst.KEY_FIELD_INSTRUCTION)
+            field_input = ds_config.get(cst.KEY_FIELD_INPUT)
+            field_output = ds_config.get(cst.KEY_FIELD_OUTPUT)
+
+            rename_mapping = {}
+            if field_instruction and field_instruction != cst.DEFAULT_INSTRUCTION_FIELD:
+                rename_mapping[field_instruction] = cst.DEFAULT_INSTRUCTION_FIELD
+            if field_output and field_output != cst.DEFAULT_OUTPUT_FIELD:
+                rename_mapping[field_output] = cst.DEFAULT_OUTPUT_FIELD
+            if field_input and field_input != cst.DEFAULT_INPUT_FIELD:
+                rename_mapping[field_input] = cst.DEFAULT_INPUT_FIELD
+
+            if rename_mapping:
+                dataset = dataset.rename_columns(rename_mapping)
+
+            # Check if we need to add an empty input field
+            if not field_input or cst.DEFAULT_INPUT_FIELD not in dataset.column_names:
+                logger.info(
+                    f"Adding empty '{cst.DEFAULT_INPUT_FIELD}' field to dataset {ds_config[cst.KEY_NAME]}"
+                )
+                dataset = dataset.add_column(
+                    cst.DEFAULT_INPUT_FIELD, ["" for _ in range(len(dataset))]
+                )
+
+            columns_to_keep = [
+                cst.DEFAULT_INSTRUCTION_FIELD,
+                cst.DEFAULT_INPUT_FIELD,
+                cst.DEFAULT_OUTPUT_FIELD,
+            ]
+            existing_columns = set(dataset.column_names)
+
+            # Ensure all required columns exist
+            for col in columns_to_keep:
+                if col not in existing_columns:
+                    raise ValueError(
+                        f"Required column '{col}' not found in dataset after standardization"
+                    )
+
+            dataset = dataset.select_columns(columns_to_keep)
+            return dataset
 
     @property
     def total_samples(self) -> int:
@@ -246,7 +311,7 @@ class DatasetsScheduler:
         """
         if not 0 <= chunk_index < self.num_chunks:
             raise IndexError(
-                f"Chunk index {chunk_index} out of range (0-{self.num_chunks-1})"
+                f"Chunk index {chunk_index} out of range (0-{self.num_chunks - 1})"
             )
 
         train_size = int(self.total_samples * (1 - self.final_test_size))
@@ -336,8 +401,8 @@ class DatasetsScheduler:
         chunk = chunk.shuffle()  # No need for seed=self.random_seed to contaminate
 
         total_size = len(chunk)
-        train_size = int(total_size * 0.90)
-        test_size = int(total_size * 0.08)
+        train_size = int(total_size * cst.TRAIN_SPLIT_RATIO)
+        test_size = int(total_size * cst.TEST_SPLIT_RATIO)
         # synth_size will be the remainder
 
         train_data = chunk.select(range(train_size))

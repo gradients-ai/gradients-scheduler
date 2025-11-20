@@ -5,17 +5,18 @@ from datetime import datetime, timedelta
 
 import wandb
 
+from . import constants as cst
 from .api import GradientsAPI
 from .config import settings
 from .dataset_scheduler import DatasetsScheduler
 from .models import (
     HotkeyDetails,
     TaskRequest,
+    TaskRequestChat,
     TaskStatus,
     TaskStatusResponse,
     TaskType,
     TaskWithFixedDatasetsRequest,
-    TaskRequestChat,
 )
 from .utils import (
     load_config,
@@ -35,15 +36,15 @@ class GradientsTrainingScheduler:
             task_name: The task name from config.yaml
         """
         self.task_name = task_name
-        self.config = load_config("config.yaml")
+        self.config = load_config(cst.CONFIG_FILENAME)
         self.task_config = self.config.get(task_name, {})
         self.api = GradientsAPI()
-        self.wandb_project = self.task_config.get("wandb_project")
+        self.wandb_project = self.task_config.get(cst.KEY_WANDB_PROJECT)
         self.tokenizer_merged = False
         self.training_number = 0
-        self.last_merged_model = self.task_config["model_repo"]
+        self.last_merged_model = self.task_config[cst.KEY_MODEL_REPO]
         self.last_successful_run = None
-        task_type_str = self.task_config.get("task_type", "InstructText")
+        task_type_str = self.task_config.get(cst.KEY_TASK_TYPE, "InstructText")
         self.task_type = TaskType(task_type_str)
 
         self.task_request = None
@@ -55,7 +56,9 @@ class GradientsTrainingScheduler:
             f"Initialized GradientsTrainingScheduler for {task_name} with task_type: {self.task_type.value}"
         )
 
-    def generate_task_request(self) -> TaskRequest | TaskWithFixedDatasetsRequest | TaskRequestChat:
+    def generate_task_request(
+        self,
+    ) -> TaskRequest | TaskWithFixedDatasetsRequest | TaskRequestChat:
         """Generate task request from task_config.
 
         Sets self.task_request and self.training_number.
@@ -81,10 +84,12 @@ class GradientsTrainingScheduler:
 
             task_request = TaskWithFixedDatasetsRequest(
                 model_repo=self.last_merged_model,
-                field_instruction="instruction",
-                field_input="input",
-                field_output="output",
-                hours_to_complete=self.task_config.get("hours_to_complete", 8),
+                field_instruction=cst.DEFAULT_INSTRUCTION_FIELD,
+                field_input=cst.DEFAULT_INPUT_FIELD,
+                field_output=cst.DEFAULT_OUTPUT_FIELD,
+                hours_to_complete=self.task_config.get(
+                    cst.KEY_HOURS_TO_COMPLETE, cst.DEFAULT_HOURS_TO_COMPLETE
+                ),
                 training_data=train_url,
                 test_data=test_url,
                 synthetic_data=synth_url,
@@ -101,11 +106,13 @@ class GradientsTrainingScheduler:
             task_request = TaskRequest(
                 model_repo=self.last_merged_model,
                 ds_repo=dataset_url,
-                field_instruction="instruction",
-                field_input="input",
-                field_output="output",
-                hours_to_complete=self.task_config.get("hours_to_complete", 8),
-                file_format="s3",
+                field_instruction=cst.DEFAULT_INSTRUCTION_FIELD,
+                field_input=cst.DEFAULT_INPUT_FIELD,
+                field_output=cst.DEFAULT_OUTPUT_FIELD,
+                hours_to_complete=self.task_config.get(
+                    cst.KEY_HOURS_TO_COMPLETE, cst.DEFAULT_HOURS_TO_COMPLETE
+                ),
+                file_format=cst.FILE_FORMAT_S3,
             )
         elif self.task_type == TaskType.CHAT:
             dataset_url = self.dataset_scheduler.prepare_and_upload_whole_chunk(
@@ -119,14 +126,18 @@ class GradientsTrainingScheduler:
             task_request = TaskRequestChat(
                 model_repo=self.last_merged_model,
                 ds_repo=dataset_url,
-                chat_template=self.task_config.get("chat_template", "chatml"),
-                chat_column=self.task_config.get("chat_column", "conversations"),
-                chat_role_field=self.task_config.get("chat_role_field", "role"),
-                chat_content_field=self.task_config.get("chat_content_field", "content"),
-                chat_user_reference=self.task_config.get("chat_user_reference", "user"),
-                chat_assistant_reference=self.task_config.get("chat_assistant_reference", "assistant"),
-                hours_to_complete=self.task_config.get("hours_to_complete", 8),
-                file_format="s3",
+                chat_template=self.task_config.get(
+                    cst.KEY_CHAT_TEMPLATE, cst.DEFAULT_CHAT_TEMPLATE
+                ),
+                chat_column=cst.DEFAULT_CHAT_COLUMN,
+                chat_role_field=cst.DEFAULT_CHAT_ROLE_FIELD,
+                chat_content_field=cst.DEFAULT_CHAT_CONTENT_FIELD,
+                chat_user_reference=cst.DEFAULT_CHAT_USER_REFERENCE,
+                chat_assistant_reference=cst.DEFAULT_CHAT_ASSISTANT_REFERENCE,
+                hours_to_complete=self.task_config.get(
+                    cst.KEY_HOURS_TO_COMPLETE, cst.DEFAULT_HOURS_TO_COMPLETE
+                ),
+                file_format=cst.FILE_FORMAT_S3,
             )
 
         return task_request
@@ -155,13 +166,13 @@ class GradientsTrainingScheduler:
         last_merged_model = None
 
         for run in runs:
-            if not hasattr(run, "config") or "training_number" not in run.config:
+            if not hasattr(run, "config") or cst.KEY_TRAINING_NUMBER not in run.config:
                 continue
 
-            training_number = run.config.get("training_number", 0)
+            training_number = run.config.get(cst.KEY_TRAINING_NUMBER, 0)
             if training_number > last_number:
                 last_number = training_number
-                last_merged_model = run.config.get("merged_model_repo")
+                last_merged_model = run.config.get(cst.KEY_MERGED_MODEL_REPO)
 
         logger.info(f"Last training number found: {last_number}")
         if last_merged_model:
@@ -189,18 +200,18 @@ class GradientsTrainingScheduler:
             logger.info("No previous successful run, scheduling immediate run")
             return datetime.now()
 
-        run_intervals = self.task_config.get("run_intervals", {})
+        run_intervals = self.task_config.get(cst.KEY_RUN_INTERVALS, {})
 
-        min_days = run_intervals.get("min_days", 0)
-        max_days = run_intervals.get("max_days", 0)
-        min_hours = run_intervals.get("min_hours", 0)
-        max_hours = run_intervals.get("max_hours", 0)
+        min_days = run_intervals.get(cst.KEY_MIN_DAYS, cst.DEFAULT_RUN_INTERVAL)
+        max_days = run_intervals.get(cst.KEY_MAX_DAYS, cst.DEFAULT_RUN_INTERVAL)
+        min_hours = run_intervals.get(cst.KEY_MIN_HOURS, cst.DEFAULT_RUN_INTERVAL)
+        max_hours = run_intervals.get(cst.KEY_MAX_HOURS, cst.DEFAULT_RUN_INTERVAL)
 
         # Calculate random interval between min and max
         days_delta = random.randint(min_days, max(min_days, max_days))
         hours_delta = random.randint(min_hours, max(min_hours, max_hours))
 
-        total_seconds = days_delta * 86400 + hours_delta * 3600
+        total_seconds = days_delta * cst.SECONDS_PER_DAY + hours_delta * cst.SECONDS_PER_HOUR
         next_run = self.last_successful_run + timedelta(seconds=total_seconds)
 
         logger.info(f"Next run scheduled for: {next_run}")
@@ -208,12 +219,12 @@ class GradientsTrainingScheduler:
 
     async def update_model_tokenizer(self) -> None:
         """Update model tokenizer if specified in config."""
-        if "tokenizer_id" in self.task_config and not self.tokenizer_merged:
+        if cst.KEY_TOKENIZER_ID in self.task_config and not self.tokenizer_merged:
             logger.info(f"Updating tokenizer for model {self.last_merged_model}")
 
             updated_model_repo = await update_model_tokenizer_subprocess(
                 model_id=self.last_merged_model,
-                tokenizer_id=self.task_config["tokenizer_id"],
+                tokenizer_id=self.task_config[cst.KEY_TOKENIZER_ID],
             )
 
             self.last_merged_model = updated_model_repo
@@ -245,14 +256,14 @@ class GradientsTrainingScheduler:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
         config = {
-            "merged_model_repo": merged_model,
-            "model_repo": miner_result.repo,
-            "previously_finetuned_model_repo": response.base_model_repository,
-            "original_model_repo": self.task_config["model_repo"],
+            cst.KEY_MERGED_MODEL_REPO: merged_model,
+            cst.KEY_MODEL_REPO: miner_result.repo,
+            cst.KEY_PREVIOUSLY_FINETUNED_MODEL_REPO: response.base_model_repository,
+            cst.KEY_ORIGINAL_MODEL_REPO: self.task_config[cst.KEY_MODEL_REPO],
             "timestamp": timestamp,
             "task_id": response.id,
-            "winning_miner": miner_result.hotkey,
-            "training_number": self.training_number,
+            cst.KEY_WINNING_MINER: miner_result.hotkey,
+            cst.KEY_TRAINING_NUMBER: self.training_number,
         }
 
         run = wandb.init(
@@ -264,8 +275,8 @@ class GradientsTrainingScheduler:
 
         wandb.log(
             {
-                "test_loss": miner_result.test_loss,
-                "synth_loss": miner_result.synth_loss,
+                cst.KEY_TEST_LOSS: miner_result.test_loss,
+                cst.KEY_SYNTH_LOSS: miner_result.synth_loss,
                 "weighted_loss": (miner_result.test_loss + miner_result.synth_loss) / 2,
                 "score": miner_result.quality_score,
             }
@@ -423,8 +434,8 @@ class GradientsTrainingScheduler:
                     )
                 else:
                     logger.warning("Training did not produce results")
-                await asyncio.sleep(60)
+                await asyncio.sleep(cst.SLEEP_INTERVAL_SECONDS)
 
             except Exception as e:
                 logger.error(f"Error in training loop: {e}", exc_info=True)
-                await asyncio.sleep(60)
+                await asyncio.sleep(cst.SLEEP_INTERVAL_SECONDS)

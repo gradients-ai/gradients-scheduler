@@ -2,6 +2,7 @@ import logging
 
 from aiohttp_retry import ExponentialRetry, RetryClient
 
+from gradients_worker import constants as cst
 from gradients_worker.config import settings
 from gradients_worker.models import (
     MinimalTaskWithHotkeyDetails,
@@ -15,14 +16,6 @@ from gradients_worker.models import (
 
 logger = logging.getLogger(__name__)
 
-CREATE_TASK_ENDPOINT = "/v1/tasks/create"
-TASKS_CREATE_ENDPOINT_CHAT = "/v1/tasks/create_chat"
-TASKS_CREATE_WITH_FIXED_DATASETS_ENDPOINT = "/v1/tasks/create_with_fixed_datasets"
-GET_TASK_STATUS_ENDPOINT = "/v1/tasks/{task_id}"
-GET_TASK_RESULTS_ENDPOINT = "/v1/tasks/task_results/{task_id}"
-GET_TASKS_RESULTS_ENDPOINT = "/v1/tasks/breakdown/{task_id}"
-AUDITING_TASKS_BY_ID_ENDPOINT = "/auditing/tasks/{task_id}"
-
 
 class GradientsAPI:
     def __init__(self):
@@ -30,17 +23,17 @@ class GradientsAPI:
         self.headers = {"Authorization": f"Bearer {settings.GRADIENTS_API_KEY}"}
 
         self.post_retry_options = ExponentialRetry(
-            attempts=3,
-            start_timeout=2,
-            max_timeout=10,
+            attempts=cst.RETRY_ATTEMPTS_POST,
+            start_timeout=cst.RETRY_START_TIMEOUT_POST,
+            max_timeout=cst.RETRY_MAX_TIMEOUT_POST,
             factor=2,
             statuses={status for status in range(400, 600)},
             exceptions={Exception},
         )
         self.get_retry_options = ExponentialRetry(
-            attempts=10,
-            start_timeout=60,
-            max_timeout=1800,
+            attempts=cst.RETRY_ATTEMPTS_GET,
+            start_timeout=cst.RETRY_START_TIMEOUT_GET,
+            max_timeout=cst.RETRY_MAX_TIMEOUT_GET,
             factor=2,
             statuses={status for status in range(500, 600)},
             exceptions={Exception},
@@ -57,7 +50,7 @@ class GradientsAPI:
 
         async with RetryClient(retry_options=self.post_retry_options) as session:
             async with session.post(
-                f"{self.base_url}{CREATE_TASK_ENDPOINT}",
+                f"{self.base_url}{cst.CREATE_TASK_ENDPOINT}",
                 headers=self.headers,
                 json=task_request.model_dump(),
             ) as response:
@@ -78,7 +71,7 @@ class GradientsAPI:
 
         async with RetryClient(retry_options=self.post_retry_options) as session:
             async with session.post(
-                f"{self.base_url}{TASKS_CREATE_ENDPOINT_CHAT}",
+                f"{self.base_url}{cst.TASKS_CREATE_ENDPOINT_CHAT}",
                 headers=self.headers,
                 json=task_request.model_dump(),
             ) as response:
@@ -99,7 +92,7 @@ class GradientsAPI:
 
         async with RetryClient(retry_options=self.post_retry_options) as session:
             async with session.post(
-                f"{self.base_url}{TASKS_CREATE_WITH_FIXED_DATASETS_ENDPOINT}",
+                f"{self.base_url}{cst.TASKS_CREATE_WITH_FIXED_DATASETS_ENDPOINT}",
                 headers=self.headers,
                 json=task_request.model_dump(),
             ) as response:
@@ -115,7 +108,7 @@ class GradientsAPI:
         logger.debug(f"Checking status for task: {task_id}")
         async with RetryClient(retry_options=self.get_retry_options) as session:
             async with session.get(
-                f"{self.base_url}{GET_TASK_STATUS_ENDPOINT.format(task_id=task_id)}",
+                f"{self.base_url}{cst.GET_TASK_STATUS_ENDPOINT.format(task_id=task_id)}",
                 headers=self.headers,
             ) as response:
                 response.raise_for_status()
@@ -124,7 +117,7 @@ class GradientsAPI:
     async def get_task_results(self, task_id: str):
         async with RetryClient(retry_options=self.get_retry_options) as session:
             async with session.get(
-                f"{self.base_url}{GET_TASK_RESULTS_ENDPOINT.format(task_id=task_id)}",
+                f"{self.base_url}{cst.GET_TASK_RESULTS_ENDPOINT.format(task_id=task_id)}",
                 headers=self.headers,
             ) as response:
                 response.raise_for_status()
@@ -135,7 +128,7 @@ class GradientsAPI:
         logger.debug(f"Getting miner breakdown for task: {task_id}")
         async with RetryClient(retry_options=self.get_retry_options) as session:
             async with session.get(
-                f"{self.base_url}{GET_TASKS_RESULTS_ENDPOINT.format(task_id=task_id)}",
+                f"{self.base_url}{cst.GET_TASKS_RESULTS_ENDPOINT.format(task_id=task_id)}",
                 headers=self.headers,
             ) as response:
                 response.raise_for_status()
@@ -148,7 +141,7 @@ class GradientsAPI:
         logger.debug(f"Getting task hotkey details for task: {task_id}")
         async with RetryClient(retry_options=self.get_retry_options) as session:
             async with session.get(
-                f"{self.base_url}{AUDITING_TASKS_BY_ID_ENDPOINT.format(task_id=task_id)}",
+                f"{self.base_url}{cst.AUDITING_TASKS_BY_ID_ENDPOINT.format(task_id=task_id)}",
                 headers=self.headers,
             ) as response:
                 response.raise_for_status()

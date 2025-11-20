@@ -1,5 +1,6 @@
 import asyncio
 
+from gradients_worker import constants as cst
 from gradients_worker.finetune_scheduler import GradientsTrainingScheduler
 from gradients_worker.logger import logger, task_context
 from gradients_worker.utils import load_config
@@ -21,11 +22,11 @@ async def main():
     """Run all periodic training tasks concurrently."""
     logger.info("Starting all training workers")
 
-    config = load_config("config.yaml")
+    config = load_config(cst.CONFIG_FILENAME)
     tasks = []
 
     for task_name, task_config in config.items():
-        if not isinstance(task_config, dict) or not task_config.get("enabled", False):
+        if not isinstance(task_config, dict) or not task_config.get(cst.KEY_ENABLED, False):
             continue
         tasks.append(launch_gradients_training_scheduler(task_name=task_name))
 

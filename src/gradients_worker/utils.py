@@ -23,6 +23,7 @@ from tenacity import (
 )
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from gradients_worker import constants as cst
 from gradients_worker.config import settings
 
 logger = getLogger(__name__)
@@ -184,7 +185,7 @@ def save_dataset_to_temp(
 def upload_to_minio(
     file_path: str,
     object_name: str,
-    expires: int = 604800,  # 7 days in seconds
+    expires: int = cst.MINIO_EXPIRATION_DAYS * cst.SECONDS_PER_DAY,
 ) -> Optional[str]:
     """Upload a file to Minio and return a presigned URL.
 
@@ -355,7 +356,7 @@ async def merge_and_upload_model_runpod(
 
     # Wait for completion with timeout
     start_time = time.time()
-    while job.status() not in ["COMPLETED", "FAILED"]:
+    while job.status() not in [cst.RUNPOD_STATUS_COMPLETED, cst.RUNPOD_STATUS_FAILED]:
         if time.time() - start_time > settings.RUNPOD_TIMEOUT:
             raise TimeoutError(f"RunPod job timed out after {settings.RUNPOD_TIMEOUT}s")
 
@@ -366,7 +367,7 @@ async def merge_and_upload_model_runpod(
 
     # Get result
     output = job.output()
-    if job.status() == "COMPLETED" and output.get("status") == "success":
+    if job.status() == cst.RUNPOD_STATUS_COMPLETED and output.get("status") == "success":
         model_repo_id = output["model_repo_id"]
         logger.info(f"RunPod merge successful: {model_repo_id}")
         return model_repo_id
