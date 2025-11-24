@@ -83,7 +83,7 @@ def merge_and_upload_model(
 
         # Save merged model
         logger.info("Saving merged model...")
-        merged_model.save_pretrained(merged_path)
+        merged_model.save_pretrained(merged_path, save_peft_format=False)
         tokenizer.save_pretrained(merged_path)
 
         # Upload to HuggingFace Hub
