@@ -40,11 +40,14 @@ name-of-the-task:
   final_test_size: 0.05
   # Random seed for shuffling the dataset
   random_seed: 45
-  # Task type: enum(InstructText, InstructTextWithFixedDatasets, Chat) - see models.py for more details
+  # Task type: enum(InstructText, InstructTextWithFixedDatasets, Chat, CustomDatasetChat) - see models.py for more details
   # Defaults to InstructText
   task_type: "InstructText"
 
-  # Chat task type specific configuration (only used when task_type is "Chat")
+  # fraction of each chunk used for testing (only for CustomDatasetChat), default: 0.02 (2%)
+  # per_chunk_test_proportion: 0.02
+
+  # Chat task type specific configuration (only used when task_type is "Chat" or "CustomDatasetChat")
   # All fields below have defaults and are optional
   # chat_column: "conversations"           # default: "conversations"
   # chat_role_field: "from"                # default: "from"
