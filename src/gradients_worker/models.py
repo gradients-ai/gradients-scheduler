@@ -1,6 +1,5 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -41,33 +40,33 @@ class TaskStatusResponse(BaseModel):
     id: UUID
     account_id: UUID
     status: TaskStatus
-    base_model_repository: Optional[str] = None
-    trained_model_repository: Optional[str] = None
-    ds_repo: Optional[str] = None
-    field_input: Optional[str] = None
-    field_system: Optional[str] = None
-    field_output: Optional[str] = None
-    field_instruction: Optional[str] = None
-    format: Optional[str] = None
-    no_input_format: Optional[str] = None
-    system_format: Optional[str] = None
-    chat_template: Optional[str] = None
-    chat_column: Optional[str] = None
-    chat_role_field: Optional[str] = None
-    chat_content_field: Optional[str] = None
-    chat_user_reference: Optional[str] = None
-    chat_assistant_reference: Optional[str] = None
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
+    base_model_repository: str | None = None
+    trained_model_repository: str | None = None
+    ds_repo: str | None = None
+    field_input: str | None = None
+    field_system: str | None = None
+    field_output: str | None = None
+    field_instruction: str | None = None
+    format: str | None = None
+    no_input_format: str | None = None
+    system_format: str | None = None
+    chat_template: str | None = None
+    chat_column: str | None = None
+    chat_role_field: str | None = None
+    chat_content_field: str | None = None
+    chat_user_reference: str | None = None
+    chat_assistant_reference: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
     created_at: str
     hours_to_complete: int
-    task_type: Optional[str] = None
-    result_model_name: Optional[str] = None
+    task_type: str | None = None
+    result_model_name: str | None = None
 
 
 class EvaluationConfig(BaseModel):
     enabled: bool = False
-    tasks: List[str] = []
+    tasks: list[str] = []
     batch_size: int = 20
     device: str = "cuda:0"
     output_path: str = "evaluation_results"
@@ -77,13 +76,13 @@ class TaskRequest(BaseModel):
     model_repo: str
     ds_repo: str
     field_instruction: str
-    field_input: Optional[str] = None
-    field_output: Optional[str] = None
-    field_system: Optional[str] = None
-    format: Optional[str] = None
+    field_input: str | None = None
+    field_output: str | None = None
+    field_system: str | None = None
+    format: str | None = None
     hours_to_complete: int
-    no_input_format: Optional[str] = None
-    file_format: Optional[str] = "hf"
+    no_input_format: str | None = None
+    file_format: str | None = "hf"
 
 
 class TaskWithFixedDatasetsRequest(TaskRequest):
@@ -96,7 +95,11 @@ class TaskWithFixedDatasetsRequest(TaskRequest):
 
 
 class TaskRequestChat(BaseModel):
-    model_repo: str
+    model_repo: str = Field(
+        ...,
+        description="The repository for the model",
+        examples=["Qwen/Qwen2.5-Coder-32B-Instruct"],
+    )
     hours_to_complete: int
     chat_template: str = Field(
         ..., description="The chat template of the dataset", examples=["chatml"]
@@ -124,12 +127,18 @@ class TaskRequestChat(BaseModel):
         description="The repository for the dataset",
         examples=["Magpie-Align/Magpie-Pro-300K-Filtered"],
     )
-    file_format: Optional[str] = "hf"
-    model_repo: str = Field(
-        ...,
-        description="The repository for the model",
-        examples=["Qwen/Qwen2.5-Coder-32B-Instruct"],
+    file_format: str | None = "hf"
+
+
+class TaskRequestChatWithCustomDataset(TaskRequestChat):
+    """Request model for create_custom_dataset_chat endpoint."""
+
+    ds_repo: str | None = Field(
+        None, description="Optional: The original repository of the dataset"
     )
+    file_format: str | None = "s3"
+    training_data: str = Field(..., description="URL to the prepared training dataset")
+    test_data: str = Field(..., description="URL to the prepared test dataset")
 
 
 class NewTaskResponse(BaseModel):
@@ -172,3 +181,4 @@ class TaskType(str, Enum):
     INSTRUCTTEXT = "InstructText"
     INSTRUCTTEXTWITHFIXEDDATASETS = "InstructTextWithFixedDatasets"
     CHAT = "Chat"
+    CUSTOMDATASETCHAT = "CustomDatasetChat"

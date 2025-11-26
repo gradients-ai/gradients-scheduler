@@ -3,8 +3,8 @@ import logging
 import math
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
 
+import numpy as np
 from datasets import (
     Dataset,
     DatasetDict,
@@ -15,7 +15,7 @@ from datasets import (
 
 from . import constants as cst
 from .models import TaskType
-from .utils import save_dataset_to_temp, upload_to_minio
+from .utils import save_and_upload_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class DatasetsScheduler:
     """Handles dataset preparation for fine-tuning tasks."""
 
-    def __init__(self, task_config: dict, cache_dir: Optional[str] = None):
+    def __init__(self, task_config: dict, cache_dir: str | None = None):
         """Initialize the datasets scheduler.
 
         Args:
@@ -41,6 +41,9 @@ class DatasetsScheduler:
         )
         self.samples_per_training = task_config.get(
             cst.KEY_SAMPLES_PER_TRAINING, cst.DEFAULT_SAMPLES_PER_TRAINING
+        )
+        self.per_chunk_test_proportion = task_config.get(
+            cst.KEY_PER_CHUNK_TEST_PROPORTION, cst.DEFAULT_PER_CHUNK_TEST_PROPORTION
         )
         task_type_str = self.task_config.get(cst.KEY_TASK_TYPE, "InstructText")
         self.task_type = TaskType(task_type_str)
@@ -64,11 +67,11 @@ class DatasetsScheduler:
         # We'll determine total_samples when needed
         self._total_samples = None
 
-    def _download_datasets(self) -> List[Tuple[Dataset, dict]]:
+    def _download_datasets(self) -> list[tuple[Dataset, dict]]:
         """Download all datasets specified in the configuration.
 
         Returns:
-            List[Tuple[Dataset, dict]]: List of downloaded datasets with their configs
+            list[tuple[Dataset, dict]]: List of downloaded datasets with their configs
         """
         downloaded_datasets = []
 
@@ -103,18 +106,24 @@ class DatasetsScheduler:
 
         return downloaded_datasets
 
-    def _standardize_dataset(self, dataset: Dataset, ds_config: dict) -> Dataset:
+    def _standardize_dataset(
+        self, dataset: Dataset, ds_config: dict, source_idx: int
+    ) -> Dataset:
         """Standardize dataset column names to instruction, input, output.
 
         Args:
             dataset: The dataset to standardize
             ds_config: The dataset configuration with field mappings
+            source_idx: Index of this dataset in the source list (for stratification)
 
         Returns:
             Dataset: Standardized dataset with canonical column names, or original dataset for Chat tasks
         """
 
-        if self.task_type == TaskType.CHAT:
+        if (
+            self.task_type == TaskType.CHAT
+            or self.task_type == TaskType.CUSTOMDATASETCHAT
+        ):
             chat_column = ds_config.get(cst.KEY_CHAT_COLUMN, cst.DEFAULT_CHAT_COLUMN)
             chat_role_field = ds_config.get(
                 cst.KEY_CHAT_ROLE_FIELD, cst.DEFAULT_CHAT_ROLE_FIELD
@@ -162,9 +171,15 @@ class DatasetsScheduler:
                     f"Standardized chat dataset {ds_config[cst.KEY_NAME]} to use '{cst.DEFAULT_CHAT_COLUMN}' with '{cst.DEFAULT_CHAT_ROLE_FIELD}' and '{cst.DEFAULT_CHAT_CONTENT_FIELD}' fields"
                 )
 
+            dataset = dataset.add_column(
+                cst.SOURCE_INDEX_COLUMN, [source_idx] * len(dataset)
+            )
             return dataset
 
-        elif self.task_type == TaskType.INSTRUCTTEXT:
+        elif self.task_type in (
+            TaskType.INSTRUCTTEXT,
+            TaskType.INSTRUCTTEXTWITHFIXEDDATASETS,
+        ):
             field_instruction = ds_config.get(cst.KEY_FIELD_INSTRUCTION)
             field_input = ds_config.get(cst.KEY_FIELD_INPUT)
             field_output = ds_config.get(cst.KEY_FIELD_OUTPUT)
@@ -204,6 +219,10 @@ class DatasetsScheduler:
                     )
 
             dataset = dataset.select_columns(columns_to_keep)
+
+            dataset = dataset.add_column(
+                cst.SOURCE_INDEX_COLUMN, [source_idx] * len(dataset)
+            )
             return dataset
 
     @property
@@ -264,11 +283,13 @@ class DatasetsScheduler:
                 return False
 
             standardized_datasets = []
-            for dataset, ds_config in downloaded_datasets:
-                standardized_dataset = self._standardize_dataset(dataset, ds_config)
+            for source_idx, (dataset, ds_config) in enumerate(downloaded_datasets):
+                standardized_dataset = self._standardize_dataset(
+                    dataset, ds_config, source_idx
+                )
                 standardized_datasets.append(standardized_dataset)
                 logger.info(
-                    f"Standardized dataset {ds_config['name']} with {len(standardized_dataset)} samples"
+                    f"Standardized dataset {ds_config['name']} (source_idx={source_idx}) with {len(standardized_dataset)} samples"
                 )
 
             merged_dataset = concatenate_datasets(standardized_datasets)
@@ -300,68 +321,121 @@ class DatasetsScheduler:
         train_size = int(self.total_samples * (1 - self.final_test_size))
         return math.ceil(train_size / self.samples_per_training)
 
-    def get_chunk_indices(self, chunk_index: int) -> Tuple[int, int]:
-        """Get the start and end indices for a specific chunk.
+    def _get_train_test_indices_by_source(
+        self, dataset: Dataset
+    ) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
+        """Get train and test indices for each source, ensuring no overlap.
+
+        For each source, deterministically shuffles its indices and splits into
+        train/test based on final_test_size. This ensures:
+        - Stratified train/test split (same proportion from each source)
+        - Complete separation between train and test indices
 
         Args:
-            chunk_index: Index of the chunk
+            dataset: The merged dataset with _source_idx column
 
         Returns:
-            Tuple[int, int]: Start and end indices
+            tuple[dict, dict]: (train_indices_by_source, test_indices_by_source)
         """
-        if not 0 <= chunk_index < self.num_chunks:
-            raise IndexError(
-                f"Chunk index {chunk_index} out of range (0-{self.num_chunks - 1})"
-            )
+        source_indices = dataset[cst.SOURCE_INDEX_COLUMN]
+        unique_sources = sorted(set(source_indices))
 
-        train_size = int(self.total_samples * (1 - self.final_test_size))
-        chunk_size = math.ceil(train_size / self.num_chunks)
+        train_by_source = {}
+        test_by_source = {}
 
-        start_idx = chunk_index * chunk_size
-        end_idx = min((chunk_index + 1) * chunk_size, train_size)
+        for source_idx in unique_sources:
+            all_indices = [i for i, s in enumerate(source_indices) if s == source_idx]
 
-        return start_idx, end_idx
+            rng = np.random.RandomState(self.random_seed)
+            rng.shuffle(all_indices)
+
+            n_test = max(1, int(len(all_indices) * self.final_test_size))
+            test_by_source[source_idx] = all_indices[:n_test]
+            train_by_source[source_idx] = all_indices[n_test:]
+
+        return train_by_source, test_by_source
 
     def get_chunk(self, index: int) -> Dataset:
-        """Get a specific dataset chunk by index.
+        """Get a specific dataset chunk with proportional representation from each source.
+
+        Each chunk contains the same proportion of each source dataset, ensuring
+        stratified sampling. Uses deterministic random state for reproducibility.
+        Only uses train indices (completely separate from test indices).
 
         Args:
             index: Index of the chunk to retrieve
 
         Returns:
-            Dataset: The requested chunk
+            Dataset: The requested chunk with proportional source representation
         """
         if not self.is_prepared():
             raise ValueError("Datasets have not been prepared yet")
 
-        start_idx, end_idx = self.get_chunk_indices(index)
+        if not 0 <= index < self.num_chunks:
+            raise IndexError(
+                f"Chunk index {index} out of range (0-{self.num_chunks - 1})"
+            )
 
-        # Load only the required slice of the dataset
         dataset = load_from_disk(self.merged_dataset_path)
-        chunk = dataset.select(range(start_idx, end_idx))
+        train_by_source, _ = self._get_train_test_indices_by_source(dataset)
+
+        total_train = sum(len(indices) for indices in train_by_source.values())
+
+        rng = np.random.RandomState(self.random_seed + index)
+
+        chunk_indices = []
+        for train_indices in train_by_source.values():
+            source_count = len(train_indices)
+            if source_count == 0:
+                continue
+
+            source_proportion = source_count / total_train
+            samples_per_chunk = max(
+                1, int(self.samples_per_training * source_proportion)
+            )
+
+            start = index * samples_per_chunk
+            end = min(start + samples_per_chunk, source_count)
+
+            if start >= source_count:
+                start = start % source_count
+                end = min(start + samples_per_chunk, source_count)
+
+            chunk_indices.extend(train_indices[start:end])
+
+        rng.shuffle(chunk_indices)
+
+        chunk = dataset.select(chunk_indices)
 
         logger.info(
-            f"Loaded chunk {index} with {len(chunk)} samples (indices {start_idx}-{end_idx})"
+            f"Loaded chunk {index} with {len(chunk)} samples (stratified from {len(train_by_source)} sources)"
         )
         return chunk
 
     def get_test_dataset(self) -> Dataset:
-        """Get the test dataset.
+        """Get the stratified test dataset.
+
+        Returns a test dataset with proportional representation from each source.
+        Test indices are completely separate from train indices used by chunks.
 
         Returns:
-            Dataset: The test dataset
+            Dataset: The stratified test dataset
         """
         if not self.is_prepared():
             raise ValueError("Datasets have not been prepared yet")
 
-        train_size = int(self.total_samples * (1 - self.final_test_size))
-
-        # Load only the test portion of the dataset
         dataset = load_from_disk(self.merged_dataset_path)
-        test_dataset = dataset.select(range(train_size, self.total_samples))
+        _, test_by_source = self._get_train_test_indices_by_source(dataset)
+
+        # Collect all test indices
+        test_indices = []
+        for indices in test_by_source.values():
+            test_indices.extend(indices)
+
+        test_dataset = dataset.select(test_indices)
 
         logger.info(
-            f"Loaded test dataset with {len(test_dataset)} samples (indices {train_size}-{self.total_samples})"
+            f"Loaded stratified test dataset with {len(test_dataset)} samples from {len(test_by_source)} sources"
         )
         return test_dataset
 
@@ -376,23 +450,58 @@ class DatasetsScheduler:
         """
         test_dataset = self.get_test_dataset()
 
-        test_name = f"{os.urandom(8).hex()}_test_data.json"
+        if cst.SOURCE_INDEX_COLUMN in test_dataset.column_names:
+            test_dataset = test_dataset.remove_columns([cst.SOURCE_INDEX_COLUMN])
 
-        test_path, _ = save_dataset_to_temp(test_dataset, prefix="test_")
-        test_url = upload_to_minio(test_path, test_name)
+        test_name = f"{os.urandom(8).hex()}_test_data.json"
+        test_url = save_and_upload_dataset(test_dataset, test_name, prefix="test_")
 
         logger.info(f"Uploaded test dataset with {len(test_dataset)} samples")
 
         return test_url
 
-    def prepare_and_upload_chunk(self, chunk_index: int) -> Tuple[str, str, str]:
+    def _split_by_source(
+        self,
+        dataset: Dataset,
+        test_proportion: float,
+        seed: int,
+    ) -> tuple[Dataset, Dataset]:
+        """Split dataset while maintaining proportions of each source.
+
+        Args:
+            dataset: The dataset to split (must have _source_idx column)
+            test_proportion: Fraction of data to use for test
+            seed: Random seed for reproducibility
+
+        Returns:
+            tuple[Dataset, Dataset]: Train and test datasets
+        """
+        rng = np.random.RandomState(seed)
+
+        source_indices = dataset[cst.SOURCE_INDEX_COLUMN]
+        unique_sources = set(source_indices)
+
+        train_indices = []
+        test_indices = []
+
+        for source in unique_sources:
+            indices = [i for i, s in enumerate(source_indices) if s == source]
+            rng.shuffle(indices)
+
+            n_test = max(1, int(len(indices) * test_proportion))
+            test_indices.extend(indices[:n_test])
+            train_indices.extend(indices[n_test:])
+
+        return dataset.select(train_indices), dataset.select(test_indices)
+
+    def prepare_and_upload_chunk(self, chunk_index: int) -> tuple[str, str, str]:
         """Get a chunk, split it into train/test/synth, save as JSONs and upload to Minio.
 
         Args:
             chunk_index: Index of the chunk to process
 
         Returns:
-            Tuple[str, str, str]: URLs for train, test, and synth JSON files
+            tuple[str, str, str]: URLs for train, test, and synth JSON files
 
         Raises:
             ValueError: If datasets aren't prepared or chunk index is invalid
@@ -409,18 +518,18 @@ class DatasetsScheduler:
         test_data = chunk.select(range(train_size, train_size + test_size))
         synth_data = chunk.select(range(train_size + test_size, total_size))
 
+        if cst.SOURCE_INDEX_COLUMN in train_data.column_names:
+            train_data = train_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
+            test_data = test_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
+            synth_data = synth_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
+
         train_name = f"{os.urandom(8).hex()}_train_data.json"
         test_name = f"{os.urandom(8).hex()}_test_data.json"
         synth_name = f"{os.urandom(8).hex()}_synth_data.json"
 
-        train_path, _ = save_dataset_to_temp(train_data, prefix="train_")
-        train_url = upload_to_minio(train_path, train_name)
-
-        test_path, _ = save_dataset_to_temp(test_data, prefix="test_")
-        test_url = upload_to_minio(test_path, test_name)
-
-        synth_path, _ = save_dataset_to_temp(synth_data, prefix="synth_")
-        synth_url = upload_to_minio(synth_path, synth_name)
+        train_url = save_and_upload_dataset(train_data, train_name, prefix="train_")
+        test_url = save_and_upload_dataset(test_data, test_name, prefix="test_")
+        synth_url = save_and_upload_dataset(synth_data, synth_name, prefix="synth_")
 
         logger.info(
             f"Split and uploaded chunk {chunk_index} "
@@ -428,6 +537,47 @@ class DatasetsScheduler:
         )
 
         return train_url, test_url, synth_url
+
+    def prepare_and_upload_chunk_train_test(self, chunk_index: int) -> tuple[str, str]:
+        """Get a chunk, split into train/test with stratification, upload to Minio.
+
+        Uses per_chunk_test_proportion for the split and maintains source proportions.
+        No synthetic data is generated.
+
+        Args:
+            chunk_index: Index of the chunk to process
+
+        Returns:
+            tuple[str, str]: URLs for train and test JSON files
+
+        Raises:
+            ValueError: If datasets aren't prepared or chunk index is invalid
+        """
+        chunk = self.get_chunk(chunk_index)
+
+        split_seed = self.random_seed + chunk_index * 1000
+        train_data, test_data = self._split_by_source(
+            chunk,
+            test_proportion=self.per_chunk_test_proportion,
+            seed=split_seed,
+        )
+
+        if cst.SOURCE_INDEX_COLUMN in train_data.column_names:
+            train_data = train_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
+            test_data = test_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
+
+        train_name = f"{os.urandom(8).hex()}_train_data.json"
+        test_name = f"{os.urandom(8).hex()}_test_data.json"
+
+        train_url = save_and_upload_dataset(train_data, train_name, prefix="train_")
+        test_url = save_and_upload_dataset(test_data, test_name, prefix="test_")
+
+        logger.info(
+            f"Split and uploaded chunk {chunk_index} "
+            f"(train: {len(train_data)}, test: {len(test_data)} samples, stratified)"
+        )
+
+        return train_url, test_url
 
     def prepare_and_upload_whole_chunk(self, chunk_index: int) -> str:
         """Get a chunk and upload it to Minio without splitting.
@@ -442,13 +592,14 @@ class DatasetsScheduler:
             ValueError: If datasets aren't prepared or chunk index is invalid
         """
         chunk = self.get_chunk(chunk_index)
-        chunk = chunk.shuffle()  # Shuffle the data
+
+        if cst.SOURCE_INDEX_COLUMN in chunk.column_names:
+            chunk = chunk.remove_columns([cst.SOURCE_INDEX_COLUMN])
 
         base_name = os.urandom(8).hex()
         dataset_name = f"{base_name}_dataset.json"
 
-        dataset_path, _ = save_dataset_to_temp(chunk, prefix="dataset_")
-        dataset_url = upload_to_minio(dataset_path, dataset_name)
+        dataset_url = save_and_upload_dataset(chunk, dataset_name, prefix="dataset_")
 
         logger.info(f"Uploaded whole chunk {chunk_index} with {len(chunk)} samples")
 

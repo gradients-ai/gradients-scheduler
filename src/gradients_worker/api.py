@@ -8,6 +8,7 @@ from gradients_worker.models import (
     MinimalTaskWithHotkeyDetails,
     NewTaskResponse,
     TaskRequest,
+    TaskRequestChatWithCustomDataset,
     TaskResultResponse,
     TaskStatusResponse,
     TaskType,
@@ -104,6 +105,28 @@ class GradientsAPI:
                     response.raise_for_status()
                 return NewTaskResponse.model_validate(await response.json())
 
+    async def create_chat_training_task_with_custom_dataset(
+        self, task_request: TaskRequestChatWithCustomDataset
+    ) -> NewTaskResponse:
+        """Create a chat training task with pre-split train/test datasets."""
+        logger.info(
+            f"Sending create custom dataset chat request: {task_request.model_dump_json(indent=2)} \n headers: {self.headers}"
+        )
+
+        async with RetryClient(retry_options=self.post_retry_options) as session:
+            async with session.post(
+                f"{self.base_url}{cst.TASKS_CREATE_CUSTOM_DATASET_CHAT_ENDPOINT}",
+                headers=self.headers,
+                json=task_request.model_dump(),
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Failed to create custom dataset chat task: {response.status} {error_text}"
+                    )
+                    response.raise_for_status()
+                return NewTaskResponse.model_validate(await response.json())
+
     async def get_task_status(self, task_id: str) -> TaskStatusResponse:
         logger.debug(f"Checking status for task: {task_id}")
         async with RetryClient(retry_options=self.get_retry_options) as session:
@@ -152,7 +175,9 @@ class GradientsAPI:
     async def create_training_task_by_type(
         self,
         task_type: TaskType,
-        task_request: TaskRequest | TaskWithFixedDatasetsRequest,
+        task_request: TaskRequest
+        | TaskWithFixedDatasetsRequest
+        | TaskRequestChatWithCustomDataset,
     ) -> NewTaskResponse:
         """Create a training task by sending a request to the appropriate API endpoint based on task type."""
 
@@ -162,5 +187,9 @@ class GradientsAPI:
             return await self.create_training_task(task_request)
         elif task_type == TaskType.CHAT:
             return await self.create_chat_training_task(task_request)
+        elif task_type == TaskType.CUSTOMDATASETCHAT:
+            return await self.create_chat_training_task_with_custom_dataset(
+                task_request
+            )
         else:
             raise ValueError(f"Unsupported task type: {task_type}")

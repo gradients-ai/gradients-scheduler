@@ -6,7 +6,6 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from logging import getLogger
-from typing import Optional, Tuple
 
 import datasets
 import runpod
@@ -161,7 +160,7 @@ async def update_model_tokenizer(model_id: str, tokenizer_id: str) -> str:
 
 def save_dataset_to_temp(
     dataset: datasets.Dataset, prefix: str = "dataset_"
-) -> Tuple[str, int]:
+) -> tuple[str, int]:
     """Save a dataset to a temporary JSON file.
 
     Args:
@@ -169,7 +168,7 @@ def save_dataset_to_temp(
         prefix: Prefix for the temporary file name
 
     Returns:
-        Tuple[str, int]: Path to the temporary file and its size
+        tuple[str, int]: Path to the temporary file and its size
     """
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".json", prefix=prefix)
 
@@ -186,7 +185,7 @@ def upload_to_minio(
     file_path: str,
     object_name: str,
     expires: int = cst.MINIO_EXPIRATION_DAYS * cst.SECONDS_PER_DAY,
-) -> Optional[str]:
+) -> str | None:
     """Upload a file to Minio and return a presigned URL.
 
     Args:
@@ -222,6 +221,32 @@ def upload_to_minio(
     except Exception as e:
         logger.error(f"Error uploading to Minio: {e}")
         return None
+
+
+def save_and_upload_dataset(
+    dataset: datasets.Dataset,
+    object_name: str,
+    prefix: str = "dataset_",
+) -> str | None:
+    """Save dataset to temp file, upload to Minio, and clean up.
+
+    Args:
+        dataset: The dataset to save and upload
+        object_name: Name to give the object in Minio
+        prefix: Prefix for the temporary file name
+
+    Returns:
+        str | None: Presigned URL of the uploaded file if successful, None otherwise
+    """
+    temp_path = None
+    try:
+        temp_path, _ = save_dataset_to_temp(dataset, prefix=prefix)
+        url = upload_to_minio(temp_path, object_name)
+        return url
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+            logger.debug(f"Cleaned up temp file: {temp_path}")
 
 
 def load_config(config_path: str) -> dict:

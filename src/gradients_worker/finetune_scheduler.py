@@ -13,6 +13,7 @@ from .models import (
     HotkeyDetails,
     TaskRequest,
     TaskRequestChat,
+    TaskRequestChatWithCustomDataset,
     TaskStatus,
     TaskStatusResponse,
     TaskType,
@@ -72,14 +73,13 @@ class GradientsTrainingScheduler:
 
         # Determine which chunk to use based on training number
         chunk_index = self.training_number % self.dataset_scheduler.num_chunks
+        logger.info(
+            f"Using chunk idx {chunk_index} ({self.dataset_scheduler.num_chunks} chunks) for training {self.training_number}"
+        )
 
         if self.task_type == TaskType.INSTRUCTTEXTWITHFIXEDDATASETS:
             train_url, test_url, synth_url = (
                 self.dataset_scheduler.prepare_and_upload_chunk(chunk_index)
-            )
-
-            logger.info(
-                f"Using chunk idx {chunk_index} ({self.dataset_scheduler.num_chunks} chunks) for training {self.training_number}"
             )
 
             task_request = TaskWithFixedDatasetsRequest(
@@ -99,10 +99,6 @@ class GradientsTrainingScheduler:
                 chunk_index
             )
 
-            logger.info(
-                f"Using chunk idx {chunk_index} ({self.dataset_scheduler.num_chunks} chunks) for training {self.training_number}"
-            )
-
             task_request = TaskRequest(
                 model_repo=self.last_merged_model,
                 ds_repo=dataset_url,
@@ -117,10 +113,6 @@ class GradientsTrainingScheduler:
         elif self.task_type == TaskType.CHAT:
             dataset_url = self.dataset_scheduler.prepare_and_upload_whole_chunk(
                 chunk_index
-            )
-
-            logger.info(
-                f"Using chunk idx {chunk_index} ({self.dataset_scheduler.num_chunks} chunks) for training {self.training_number}"
             )
 
             task_request = TaskRequestChat(
@@ -138,6 +130,29 @@ class GradientsTrainingScheduler:
                     cst.KEY_HOURS_TO_COMPLETE, cst.DEFAULT_HOURS_TO_COMPLETE
                 ),
                 file_format=cst.FILE_FORMAT_S3,
+            )
+
+        elif self.task_type == TaskType.CUSTOMDATASETCHAT:
+            train_url, test_url = (
+                self.dataset_scheduler.prepare_and_upload_chunk_train_test(chunk_index)
+            )
+
+            task_request = TaskRequestChatWithCustomDataset(
+                model_repo=self.last_merged_model,
+                chat_template=self.task_config.get(
+                    cst.KEY_CHAT_TEMPLATE, cst.DEFAULT_CHAT_TEMPLATE
+                ),
+                chat_column=cst.DEFAULT_CHAT_COLUMN,
+                chat_role_field=cst.DEFAULT_CHAT_ROLE_FIELD,
+                chat_content_field=cst.DEFAULT_CHAT_CONTENT_FIELD,
+                chat_user_reference=cst.DEFAULT_CHAT_USER_REFERENCE,
+                chat_assistant_reference=cst.DEFAULT_CHAT_ASSISTANT_REFERENCE,
+                hours_to_complete=self.task_config.get(
+                    cst.KEY_HOURS_TO_COMPLETE, cst.DEFAULT_HOURS_TO_COMPLETE
+                ),
+                file_format=cst.FILE_FORMAT_S3,
+                training_data=train_url,
+                test_data=test_url,
             )
 
         return task_request
@@ -211,7 +226,9 @@ class GradientsTrainingScheduler:
         days_delta = random.randint(min_days, max(min_days, max_days))
         hours_delta = random.randint(min_hours, max(min_hours, max_hours))
 
-        total_seconds = days_delta * cst.SECONDS_PER_DAY + hours_delta * cst.SECONDS_PER_HOUR
+        total_seconds = (
+            days_delta * cst.SECONDS_PER_DAY + hours_delta * cst.SECONDS_PER_HOUR
+        )
         next_run = self.last_successful_run + timedelta(seconds=total_seconds)
 
         logger.info(f"Next run scheduled for: {next_run}")

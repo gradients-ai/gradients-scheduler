@@ -17,6 +17,7 @@ DEFAULT_INSTRUCTION_FIELD = "instruction"
 DEFAULT_INPUT_FIELD = "input"
 DEFAULT_OUTPUT_FIELD = "output"
 TRAIN_SPLIT = "train"
+SOURCE_INDEX_COLUMN = "_source_idx"
 
 # =============================================================================
 # Configuration Keys - Core Task Config
@@ -41,6 +42,7 @@ KEY_FIELD_OUTPUT = "field_output"
 KEY_RANDOM_SEED = "random_seed"
 KEY_FINAL_TEST_SIZE = "final_test_size"
 KEY_SAMPLES_PER_TRAINING = "samples_per_training"
+KEY_PER_CHUNK_TEST_PROPORTION = "per_chunk_test_proportion"
 
 # =============================================================================
 # Configuration Keys - Chat Dataset Config
@@ -83,6 +85,7 @@ KEY_SCORE = "score"
 DEFAULT_RANDOM_SEED = 42
 DEFAULT_FINAL_TEST_SIZE = 0.05
 DEFAULT_SAMPLES_PER_TRAINING = 150_000
+DEFAULT_PER_CHUNK_TEST_PROPORTION = 0.02
 
 # =============================================================================
 # Magic Numbers - Dataset Split Ratios
@@ -181,6 +184,7 @@ RUNPOD_STATUS_ERROR = "failed"
 CREATE_TASK_ENDPOINT = "/v1/tasks/create"
 TASKS_CREATE_ENDPOINT_CHAT = "/v1/tasks/create_chat"
 TASKS_CREATE_WITH_FIXED_DATASETS_ENDPOINT = "/v1/tasks/create_with_fixed_datasets"
+TASKS_CREATE_CUSTOM_DATASET_CHAT_ENDPOINT = "/v1/tasks/create_custom_dataset_chat"
 GET_TASK_STATUS_ENDPOINT = "/v1/tasks/{task_id}"
 GET_TASK_RESULTS_ENDPOINT = "/v1/tasks/task_results/{task_id}"
 GET_TASKS_RESULTS_ENDPOINT = "/v1/tasks/breakdown/{task_id}"
