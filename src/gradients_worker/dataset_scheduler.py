@@ -338,13 +338,18 @@ class DatasetsScheduler:
             tuple[dict, dict]: (train_indices_by_source, test_indices_by_source)
         """
         source_indices = dataset[cst.SOURCE_INDEX_COLUMN]
-        unique_sources = sorted(set(source_indices))
+
+        indices_by_source: dict[int, list[int]] = {}
+        for i, source_idx in enumerate(source_indices):
+            if source_idx not in indices_by_source:
+                indices_by_source[source_idx] = []
+            indices_by_source[source_idx].append(i)
 
         train_by_source = {}
         test_by_source = {}
 
-        for source_idx in unique_sources:
-            all_indices = [i for i, s in enumerate(source_indices) if s == source_idx]
+        for source_idx in sorted(indices_by_source.keys()):
+            all_indices = indices_by_source[source_idx]
 
             rng = np.random.RandomState(self.random_seed)
             rng.shuffle(all_indices)
@@ -479,13 +484,18 @@ class DatasetsScheduler:
         rng = np.random.RandomState(seed)
 
         source_indices = dataset[cst.SOURCE_INDEX_COLUMN]
-        unique_sources = set(source_indices)
+
+        indices_by_source: dict[int, list[int]] = {}
+        for i, source_idx in enumerate(source_indices):
+            if source_idx not in indices_by_source:
+                indices_by_source[source_idx] = []
+            indices_by_source[source_idx].append(i)
 
         train_indices = []
         test_indices = []
 
-        for source in unique_sources:
-            indices = [i for i, s in enumerate(source_indices) if s == source]
+        for source in sorted(indices_by_source.keys()):
+            indices = indices_by_source[source]
             rng.shuffle(indices)
 
             n_test = max(1, int(len(indices) * test_proportion))
