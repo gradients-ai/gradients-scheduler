@@ -85,15 +85,6 @@ class TaskRequest(BaseModel):
     file_format: str | None = "hf"
 
 
-class TaskWithFixedDatasetsRequest(TaskRequest):
-    ds_repo: str | None = Field(
-        None, description="Optional: The original repository of the dataset"
-    )
-    training_data: str = Field(..., description="The prepared training dataset")
-    synthetic_data: str = Field(..., description="The prepared synthetic dataset")
-    test_data: str = Field(..., description="The prepared test dataset")
-
-
 class TaskRequestChat(BaseModel):
     model_repo: str = Field(
         ...,
@@ -179,6 +170,5 @@ class MinimalTaskWithHotkeyDetails(BaseModel):
 
 class TaskType(str, Enum):
     INSTRUCTTEXT = "InstructText"
-    INSTRUCTTEXTWITHFIXEDDATASETS = "InstructTextWithFixedDatasets"
     CHAT = "Chat"
     CUSTOMDATASETCHAT = "CustomDatasetChat"

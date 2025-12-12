@@ -176,10 +176,7 @@ class DatasetsScheduler:
             )
             return dataset
 
-        elif self.task_type in (
-            TaskType.INSTRUCTTEXT,
-            TaskType.INSTRUCTTEXTWITHFIXEDDATASETS,
-        ):
+        elif self.task_type == TaskType.INSTRUCTTEXT:
             field_instruction = ds_config.get(cst.KEY_FIELD_INSTRUCTION)
             field_input = ds_config.get(cst.KEY_FIELD_INPUT)
             field_output = ds_config.get(cst.KEY_FIELD_OUTPUT)
@@ -503,50 +500,6 @@ class DatasetsScheduler:
             train_indices.extend(indices[n_test:])
 
         return dataset.select(train_indices), dataset.select(test_indices)
-
-    def prepare_and_upload_chunk(self, chunk_index: int) -> tuple[str, str, str]:
-        """Get a chunk, split it into train/test/synth, save as JSONs and upload to Minio.
-
-        Args:
-            chunk_index: Index of the chunk to process
-
-        Returns:
-            tuple[str, str, str]: URLs for train, test, and synth JSON files
-
-        Raises:
-            ValueError: If datasets aren't prepared or chunk index is invalid
-        """
-        chunk = self.get_chunk(chunk_index)
-        chunk = chunk.shuffle()  # No need for seed=self.random_seed to contaminate
-
-        total_size = len(chunk)
-        train_size = int(total_size * cst.TRAIN_SPLIT_RATIO)
-        test_size = int(total_size * cst.TEST_SPLIT_RATIO)
-        # synth_size will be the remainder
-
-        train_data = chunk.select(range(train_size))
-        test_data = chunk.select(range(train_size, train_size + test_size))
-        synth_data = chunk.select(range(train_size + test_size, total_size))
-
-        if cst.SOURCE_INDEX_COLUMN in train_data.column_names:
-            train_data = train_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
-            test_data = test_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
-            synth_data = synth_data.remove_columns([cst.SOURCE_INDEX_COLUMN])
-
-        train_name = f"{os.urandom(8).hex()}_train_data.json"
-        test_name = f"{os.urandom(8).hex()}_test_data.json"
-        synth_name = f"{os.urandom(8).hex()}_synth_data.json"
-
-        train_url = save_and_upload_dataset(train_data, train_name, prefix="train_")
-        test_url = save_and_upload_dataset(test_data, test_name, prefix="test_")
-        synth_url = save_and_upload_dataset(synth_data, synth_name, prefix="synth_")
-
-        logger.info(
-            f"Split and uploaded chunk {chunk_index} "
-            f"(train: {len(train_data)}, test: {len(test_data)}, synth: {len(synth_data)} samples)"
-        )
-
-        return train_url, test_url, synth_url
 
     def prepare_and_upload_chunk_train_test(self, chunk_index: int) -> tuple[str, str]:
         """Get a chunk, split into train/test with stratification, upload to Minio.

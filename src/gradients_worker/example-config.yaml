@@ -40,7 +40,7 @@ name-of-the-task:
   final_test_size: 0.05
   # Random seed for shuffling the dataset
   random_seed: 45
-  # Task type: enum(InstructText, InstructTextWithFixedDatasets, Chat, CustomDatasetChat) - see models.py for more details
+  # Task type: enum(InstructText, Chat, CustomDatasetChat) - see models.py for more details
   # Defaults to InstructText
   task_type: "InstructText"
 

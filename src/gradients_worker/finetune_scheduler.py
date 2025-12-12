@@ -17,7 +17,6 @@ from .models import (
     TaskStatus,
     TaskStatusResponse,
     TaskType,
-    TaskWithFixedDatasetsRequest,
 )
 from .utils import (
     load_config,
@@ -59,13 +58,13 @@ class GradientsTrainingScheduler:
 
     def generate_task_request(
         self,
-    ) -> TaskRequest | TaskWithFixedDatasetsRequest | TaskRequestChat:
+    ) -> TaskRequest | TaskRequestChat | TaskRequestChatWithCustomDataset:
         """Generate task request from task_config.
 
         Sets self.task_request and self.training_number.
 
         Returns:
-            TaskRequest | TaskWithFixedDatasetsRequest: The generated task request
+            TaskRequest | TaskRequestChat | TaskRequestChatWithCustomDataset: The generated task request
         """
         # Will prepare if not already done
         if not self.dataset_scheduler.prepare_datasets():
@@ -77,24 +76,7 @@ class GradientsTrainingScheduler:
             f"Using chunk idx {chunk_index} ({self.dataset_scheduler.num_chunks} chunks) for training {self.training_number}"
         )
 
-        if self.task_type == TaskType.INSTRUCTTEXTWITHFIXEDDATASETS:
-            train_url, test_url, synth_url = (
-                self.dataset_scheduler.prepare_and_upload_chunk(chunk_index)
-            )
-
-            task_request = TaskWithFixedDatasetsRequest(
-                model_repo=self.last_merged_model,
-                field_instruction=cst.DEFAULT_INSTRUCTION_FIELD,
-                field_input=cst.DEFAULT_INPUT_FIELD,
-                field_output=cst.DEFAULT_OUTPUT_FIELD,
-                hours_to_complete=self.task_config.get(
-                    cst.KEY_HOURS_TO_COMPLETE, cst.DEFAULT_HOURS_TO_COMPLETE
-                ),
-                training_data=train_url,
-                test_data=test_url,
-                synthetic_data=synth_url,
-            )
-        elif self.task_type == TaskType.INSTRUCTTEXT:
+        if self.task_type == TaskType.INSTRUCTTEXT:
             dataset_url = self.dataset_scheduler.prepare_and_upload_whole_chunk(
                 chunk_index
             )

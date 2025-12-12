@@ -12,7 +12,6 @@ from gradients_worker.models import (
     TaskResultResponse,
     TaskStatusResponse,
     TaskType,
-    TaskWithFixedDatasetsRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,27 +79,6 @@ class GradientsAPI:
                     error_text = await response.text()
                     logger.error(
                         f"Failed to create training task: {response.status} {error_text}"
-                    )
-                    response.raise_for_status()
-                return NewTaskResponse.model_validate(await response.json())
-
-    async def create_training_task_with_fixed_datasets(
-        self, task_request: TaskWithFixedDatasetsRequest
-    ) -> NewTaskResponse:
-        logger.info(
-            f"Sending create training task with fixed datasets request: {task_request.model_dump_json(indent=2)} \n headers: {self.headers}"
-        )
-
-        async with RetryClient(retry_options=self.post_retry_options) as session:
-            async with session.post(
-                f"{self.base_url}{cst.TASKS_CREATE_WITH_FIXED_DATASETS_ENDPOINT}",
-                headers=self.headers,
-                json=task_request.model_dump(),
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(
-                        f"Failed to create training task with fixed datasets: {response.status} {error_text}"
                     )
                     response.raise_for_status()
                 return NewTaskResponse.model_validate(await response.json())
@@ -175,15 +153,11 @@ class GradientsAPI:
     async def create_training_task_by_type(
         self,
         task_type: TaskType,
-        task_request: TaskRequest
-        | TaskWithFixedDatasetsRequest
-        | TaskRequestChatWithCustomDataset,
+        task_request: TaskRequest | TaskRequestChatWithCustomDataset,
     ) -> NewTaskResponse:
         """Create a training task by sending a request to the appropriate API endpoint based on task type."""
 
-        if task_type == TaskType.INSTRUCTTEXTWITHFIXEDDATASETS:
-            return await self.create_training_task_with_fixed_datasets(task_request)
-        elif task_type == TaskType.INSTRUCTTEXT:
+        if task_type == TaskType.INSTRUCTTEXT:
             return await self.create_training_task(task_request)
         elif task_type == TaskType.CHAT:
             return await self.create_chat_training_task(task_request)
